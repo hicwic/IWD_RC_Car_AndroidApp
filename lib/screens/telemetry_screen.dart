@@ -4,8 +4,10 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:rc_car_deck/ble/ble_manager.dart';
+
 import '../ble/ble_provider.dart';
+import '../data/rc_protocol.dart';
+import '../data/telemetry.dart';
 
 class TelemetryScreen extends ConsumerStatefulWidget {
   const TelemetryScreen({super.key});
@@ -15,10 +17,13 @@ class TelemetryScreen extends ConsumerStatefulWidget {
 }
 
 class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
+  TelemetryData telemetryData = TelemetryData.empty;
   final List<FlSpot> targetData = [];
   final List<FlSpot> currentData = [];
-  final List<FlSpot> leftData = [];
-  final List<FlSpot> rightData = [];
+  final List<FlSpot> rearLeftData = [];
+  final List<FlSpot> rearRightData = [];
+  final List<FlSpot> frontLeftData = [];
+  final List<FlSpot> frontRightData = [];
 
   StreamSubscription<List<int>>? _bleSubscription;
   StreamSubscription<bool>? _connectionSub;
@@ -32,11 +37,6 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
   double graphDuration = 10;
   final List<double> durationOptions = [10, 30, 60, 300];
 
-  bool reverse = false;
-  bool readyForReverse = true;
-  bool ramping = true;
-  bool coasting = false;
-
   bool isConnected = true;
 
   @override
@@ -45,16 +45,11 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
 
     Future.microtask(() {
       final ble = ref.read(bleProvider);
-      final connectionState = ref.watch(bleConnectionStateProvider);
-      final isConnected = connectionState.value == BluetoothConnectionState.connected;      
+      final connection = ref.watch(bleConnectionNotifierProvider);
+      final isConnected = connection.value == BluetoothConnectionState.connected;      
       if (isConnected) {
         ble.setScreen("telemetry");
-
-        final char = ble.commandChar;
-        if (char != null) {
-          char.setNotifyValue(true);
-          _bleSubscription = char.lastValueStream.listen(_onDataReceived);
-        }
+        ble.onTelemetryReceived = _onDataReceived;
       }
     });
   }
@@ -68,32 +63,16 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
   }
 
   void _onDataReceived(List<int> raw) {
-    final str = String.fromCharCodes(raw);
-    final fields = Map.fromEntries(
-      str.split(',').map((e) => e.split(':')).where((e) => e.length == 2).map((e) => MapEntry(e[0], e[1])),
-    );
-
-    final t = double.tryParse(fields['ts'] ?? '') ?? 0;
-    final c = double.tryParse(fields['cs'] ?? '') ?? 0;
-    final l = double.tryParse(fields['rl'] ?? '') ?? 0;
-    final r = double.tryParse(fields['rr'] ?? '') ?? 0;
-
-    final rev = fields['rev'] == '1';
-    final ready = fields['revOK'] == '1';
-    final ramp = fields['ramp'] == '1';
-    final coast = fields['coast'] == '1';
+    telemetryData = TelemetryData.fromBytes(raw);
 
     setState(() {
       time += 0.2;
-      _addPoint(targetData, FlSpot(time, t));
-      _addPoint(currentData, FlSpot(time, c));
-      _addPoint(leftData, FlSpot(time, l));
-      _addPoint(rightData, FlSpot(time, r));
-
-      reverse = rev;
-      readyForReverse = ready;
-      ramping = ramp;
-      coasting = coast;
+      _addPoint(targetData, FlSpot(time, telemetryData.targetSpeed));
+      _addPoint(currentData, FlSpot(time, telemetryData.currentSpeed));
+      _addPoint(rearLeftData, FlSpot(time, telemetryData.rearLeft));
+      _addPoint(rearRightData, FlSpot(time, telemetryData.rearRight));
+      _addPoint(frontLeftData, FlSpot(time, telemetryData.rearLeft));
+      _addPoint(frontRightData, FlSpot(time, telemetryData.rearRight));      
     });
   }
 
@@ -104,7 +83,17 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bleConnectionState = ref.watch(bleConnectionStateProvider);
+    final connection = ref.watch(bleConnectionNotifierProvider);
+    final circle = connection.when(
+      data: (state) => CircleAvatar(
+        radius: 6,
+        backgroundColor: state == BluetoothConnectionState.connected
+            ? Colors.green
+            : Colors.red,
+      ),
+      loading: () => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
+      error: (_, __) => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -112,17 +101,7 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: bleConnectionState.when(
-              data: (state) {
-                final isConnected = state == BluetoothConnectionState.connected;
-                return CircleAvatar(
-                  radius: 6,
-                  backgroundColor: isConnected ? Colors.green : Colors.red,
-                );
-              },
-              loading: () => const CircleAvatar(radius: 6, backgroundColor: Colors.orange),
-              error: (_, __) => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
-            ),
+            child: circle
           ),
         ],
       ),
@@ -157,8 +136,7 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
                   tooltip: telemetryPaused ? 'Reprendre la télémétrie' : 'Pause',
                   onPressed: () {
                     final ble = ref.read(bleProvider);
-                    final command = telemetryPaused ? "resumetelemetry" : "pausetelemetry";
-                    ble.sendCommand(command);
+                    telemetryPaused ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_RESUME)) : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_PAUSE)) ;
 
                     setState(() {
                       telemetryPaused = !telemetryPaused;
@@ -189,8 +167,10 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
                   lineBarsData: [
                     _line(targetData, Colors.orange),
                     _line(currentData, Colors.blue),
-                    _line(leftData, Colors.red),
-                    _line(rightData, Colors.green),
+                    _line(rearLeftData, Colors.red),
+                    _line(rearRightData, Colors.green),
+                    _line(frontLeftData, Colors.yellow),
+                    _line(frontRightData, Colors.deepPurple),                    
                   ],
                   lineTouchData: LineTouchData(
                     enabled: true,
@@ -230,10 +210,10 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
             Wrap(
               spacing: 8,
               children: [
-                _statusChip('Reverse', reverse),
-                _statusChip('ReadyForReverse', readyForReverse),
-                _statusChip('Ramping', ramping),
-                _statusChip('Coasting', coasting),
+                _statusChip('Reverse', telemetryData.reverse),
+                _statusChip('ReadyForReverse', telemetryData.readyForReverse),
+                _statusChip('Ramping', telemetryData.ramping),
+                _statusChip('Coasting', telemetryData.coasting),
               ],
             ),
           ],
@@ -245,8 +225,10 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
   void _filterOldPoints() {
     targetData.removeWhere((p) => time - p.x > graphDuration);
     currentData.removeWhere((p) => time - p.x > graphDuration);
-    leftData.removeWhere((p) => time - p.x > graphDuration);
-    rightData.removeWhere((p) => time - p.x > graphDuration);
+    rearLeftData.removeWhere((p) => time - p.x > graphDuration);
+    rearRightData.removeWhere((p) => time - p.x > graphDuration);
+    frontLeftData.removeWhere((p) => time - p.x > graphDuration);
+    frontRightData.removeWhere((p) => time - p.x > graphDuration);    
   }
 
   LineChartBarData _line(List<FlSpot> data, Color color) {

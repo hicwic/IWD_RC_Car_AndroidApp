@@ -117,7 +117,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with RouteAware {
       context: context,
       builder: (context) {
         final filteredResults = results
-            .where((r) => r.device.platformName.startsWith('RC_CAR'))
+  //          .where((r) => r.device.platformName.startsWith('RC_CAR'))
             .toList();
 
         return AlertDialog(

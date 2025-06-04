@@ -2,13 +2,19 @@ import 'dart:async';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../data/rc_protocol.dart';
+
+
 class BleManager {
+  final void Function(BluetoothConnectionState)? onConnectionUpdate;
+  BleManager({this.onConnectionUpdate});
+
   BluetoothDevice? device;
   BluetoothCharacteristic? screenChar;
   BluetoothCharacteristic? commandChar;
 
   void Function(List<int>)? onSettingsReceived;
-  void Function(String)? onTelemetryReceived;
+  void Function(List<int>)? onTelemetryReceived;
   void Function()? onDisconnected;
   void Function()? onConnected;  
 
@@ -45,26 +51,28 @@ class BleManager {
 
   void _handleCommandData(List<int> data) {
     if (data.isEmpty) return;
+    if (data[0] != RCProtocol.MSG_TYPE_DATA) return;
 
-    final type = data[0];
+    final type = data[1];
     final payload = data.sublist(1);
 
     switch (type) {
-      case 0x01: // MSG_TYPE_SETTINGS
-        if (payload.length >= 7) {
-          onSettingsReceived?.call(data); // on passe tout, y compris type
+      case RCProtocol.DATA_TYPE_SETTINGS:
+        print("Trame settings reçu");
+        if (onSettingsReceived != null) {
+          onSettingsReceived?.call(data);
         }
         break;
 
-      case 0x03: // MSG_TYPE_TELEMETRY (optionnel)
+      case RCProtocol.DATA_TYPE_TELEMETRY:
+        print("Trame telemetry reçu");
         if (onTelemetryReceived != null) {
-          final message = String.fromCharCodes(payload);
-          onTelemetryReceived!(message);
+          onTelemetryReceived?.call(data);
         }
         break;
 
       default:
-        print("Trame inconnue, type: \$type");
+        print("Trame inconnue, type: $type");
     }
   }
 
@@ -79,23 +87,23 @@ class BleManager {
     }
   }
 
-  Future<void> sendCommand(String cmd) async {
-    if (commandChar == null) return;
-    try {
-      await commandChar!.write(cmd.codeUnits);
-      print("Commande envoyée : $cmd");
-    } catch (e) {
-      print("Erreur sendCommand: $e");
-    }
-  }
+  // Future<void> sendCommand(String cmd) async {
+  //   if (commandChar == null) return;
+  //   try {
+  //     await commandChar!.write(cmd.codeUnits);
+  //     print("Commande envoyée : $cmd");
+  //   } catch (e) {
+  //     print("Erreur sendCommand: $e");
+  //   }
+  // }
 
-  Future<void> sendSettings(List<int> data) async {
+  Future<void> sendData(List<int> data) async {
     if (commandChar == null) return;
     try {
       await commandChar!.write(data);
       print("Trame settings envoyée (${data.length} octets)");
     } catch (e) {
-      print("Erreur sendSettings: $e");
+      print("Erreur sendData: $e");
     }
   }
 
@@ -113,6 +121,7 @@ class BleManager {
 
     _connSub = device!.connectionState.listen((state) async {
       _connectionController.add(state);
+      onConnectionUpdate?.call(state);
       if (state == BluetoothConnectionState.disconnected) {
         print("⚠️ ESP déconnecté");
         if (_shouldReconnect) {
@@ -131,6 +140,7 @@ class BleManager {
         await device!.connect(autoConnect: true);
         if (await device!.isConnected) {
           print("✅ Reconnecté !");
+          onConnectionUpdate?.call(BluetoothConnectionState.connected);
           await setupCharacteristics();
           await setScreen(currentScreen); // ou autre écran actif
           return;
@@ -147,7 +157,7 @@ class BleManager {
 
   void stopMonitoring() {
     _connSub.cancel();
-    _connectionController.add(BluetoothConnectionState.disconnected);
+    onConnectionUpdate?.call(BluetoothConnectionState.disconnected);
     _shouldReconnect = false;
   }
 

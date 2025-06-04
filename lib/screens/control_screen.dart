@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_joystick/flutter_joystick.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
 import '../ble/ble_provider.dart';
+import '../data/rc_protocol.dart';
 
 class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
@@ -26,6 +28,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   void initState() {
     super.initState();
 
+    Future.microtask(() {
+      final ble = ref.read(bleProvider);
+      ble.setScreen("control");
+    });
+
     // Simule les valeurs PWM radio
     _pwmTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       setState(() {
@@ -41,21 +48,41 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     super.dispose();
   }
 
+  List<int> _encodeInputs() {
+    return [
+      0x02,
+      joystickX.toInt(),
+      joystickY.toInt(),
+    ];
+  }
+
+
   void _onJoystickMove(StickDragDetails details) {
     if (!overrideControl) return;
 
     setState(() {
-      joystickX = details.x;
-      joystickY = details.y;
+      joystickX = details.x * 100;
+      joystickY = details.y * 100;
     });
 
-    // Ici tu peux envoyer les données vers l'ESP32 si besoin
-    // Ex : sendToESP32(x: details.x, y: details.y);
+    final ble = ref.read(bleProvider);
+    final data = _encodeInputs();
+    ble.sendData(data);
   }
 
   @override
   Widget build(BuildContext context) {
-    final bleConnectionState = ref.watch(bleConnectionStateProvider);
+    final connection = ref.watch(bleConnectionNotifierProvider);
+    final circle = connection.when(
+      data: (state) => CircleAvatar(
+        radius: 6,
+        backgroundColor: state == BluetoothConnectionState.connected
+            ? Colors.green
+            : Colors.red,
+      ),
+      loading: () => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
+      error: (_, __) => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -63,17 +90,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: bleConnectionState.when(
-              data: (state) {
-                final isConnected = state == BluetoothConnectionState.connected;
-                return CircleAvatar(
-                  radius: 6,
-                  backgroundColor: isConnected ? Colors.green : Colors.red,
-                );
-              },
-              loading: () => const CircleAvatar(radius: 6, backgroundColor: Colors.orange),
-              error: (_, __) => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
-            ),
+            child: circle
           ),
         ],
       ),
@@ -126,6 +143,10 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   onChanged: (val) {
                     if (val != null) {
                       setState(() => overrideControl = val);
+ 
+                      final ble = ref.read(bleProvider);
+                      overrideControl ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_OVERRIDE)) : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_RELEASE));
+
                     }
                   },
                 ),
@@ -138,11 +159,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             child: Column(
               children: [
                 Text(
-                  'Throttle: ${(joystickY * 100).toInt()}',
+                  'Throttle: ${(joystickY).toInt()}',
                   style: const TextStyle(fontSize: 16),
                 ),
                 Text(
-                  'Steering: ${(joystickX * 100).toInt()}',
+                  'Steering: ${(joystickX).toInt()}',
                   style: const TextStyle(fontSize: 16),
                 ),
               ],
