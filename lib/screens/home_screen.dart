@@ -6,6 +6,7 @@ import '../ble/ble_provider.dart'; // ton provider
 import 'package:permission_handler/permission_handler.dart';
 
 import '../main.dart';
+import '../data/car_settings.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -74,6 +75,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with RouteAware {
     final isConnected = await ble.isConnected();
     if (isConnected) {
       setState(() => connectedDevice = ble.device);
+
+      ref.read(carSettingsProvider.notifier).syncWithEsp32(ble);
     }
 
     // Écoute des changements d'état Bluetooth
@@ -159,6 +162,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with RouteAware {
       ble.startConnectionMonitor();
       await ble.setupCharacteristics();
       setState(() => connectedDevice = ble.device);
+      ref.read(carSettingsProvider.notifier).syncWithEsp32(ble);
     }
   }
 

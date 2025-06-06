@@ -6,8 +6,11 @@ import '../utils/tlv_utils.dart'; // Assure-toi que TLVReader est bien accessibl
 class TelemetryData {
   final double targetSpeed;
   final double currentSpeed;
-  final double rearLeft;
-  final double rearRight;
+  final double? central;
+  final double? rearLeft;
+  final double? rearRight;
+  final double? frontLeft;
+  final double? frontRight;  
   final bool reverse;
   final bool readyForReverse;
   final bool ramping;
@@ -16,8 +19,11 @@ class TelemetryData {
   const TelemetryData({
     required this.targetSpeed,
     required this.currentSpeed,
-    required this.rearLeft,
-    required this.rearRight,
+    this.central,
+    this.rearLeft,
+    this.rearRight,
+    this.frontLeft,
+    this.frontRight,    
     required this.reverse,
     required this.readyForReverse,
     required this.ramping,
@@ -27,8 +33,11 @@ class TelemetryData {
   static const TelemetryData empty = TelemetryData(
     targetSpeed: 0,
     currentSpeed: 0,
-    rearLeft: 0,
-    rearRight: 0,
+    central: null,
+    rearLeft: null,
+    rearRight: null,
+    frontLeft: null,
+    frontRight: null,    
     reverse: false,
     readyForReverse: false,
     ramping: false,
@@ -39,7 +48,7 @@ class TelemetryData {
     final data = Uint8List.fromList(raw);
     final reader = TLVReader(data);
 
-    if (!reader.isValid(RCProtocol.MSG_TYPE_DATA, RCProtocol.DATA_TYPE_TELEMETRY)) {
+    if (!reader.isValid(RCProtocol.MSG_TYPE_DATA, RCProtocol.DATA_TYPE_TELEMETRY_MOTION)) {
       throw FormatException("Invalid telemetry message");
     }
 
@@ -51,6 +60,12 @@ class TelemetryData {
       fields[entry.id] = entry.value;
     }
 
+    double? readFloatOptional(int id) =>
+        fields.containsKey(id) ? TLVReader.readFloat(fields[id]!) : null;
+
+    double readFloat(int id, [double def = 0.0]) =>
+        fields.containsKey(id) ? TLVReader.readFloat(fields[id]!) : def;
+
     double readDouble(int id, [double def = 0.0]) =>
         fields.containsKey(id) ? TLVReader.readDouble(fields[id]!) : def;
 
@@ -58,10 +73,13 @@ class TelemetryData {
         fields.containsKey(id) ? TLVReader.readBool(fields[id]!) : false;
 
     return TelemetryData(
-      targetSpeed: readDouble(0x01),
-      currentSpeed: readDouble(0x02),
-      rearLeft: readDouble(0x03),
-      rearRight: readDouble(0x04),
+      targetSpeed: readFloat(0x01),
+      currentSpeed: readFloat(0x02),
+      rearLeft: readFloatOptional(0x03),
+      rearRight: readFloatOptional(0x04),
+      frontLeft: readFloatOptional(0x09),
+      frontRight: readFloatOptional(0x0A),   
+      central: readFloatOptional(0x0B),     
       reverse: readBool(0x05),
       readyForReverse: readBool(0x06),
       ramping: readBool(0x07),

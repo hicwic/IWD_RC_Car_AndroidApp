@@ -40,7 +40,7 @@ extension DriveTrainTypeLabel on DriveTrainType {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
-  CarSettings settings = CarSettings();
+  //CarSettings settings = CarSettings();
 
   bool showFrontRearSlider = false;
   bool showFrontSlider = false;
@@ -78,6 +78,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
 
   Widget _buildDrivetrainSchema() {
+    final settings = ref.watch(carSettingsProvider);
     bool centerSelectorEnabled = settings.wheelDriveType == WheelDriveType.aiwDrive;
     bool frontSelectorEnabled = settings.wheelDriveType == WheelDriveType.fiwDrive || settings.wheelDriveType == WheelDriveType.aiwDrive;
     bool rearSelectorEnabled = settings.wheelDriveType == WheelDriveType.riwDrive || settings.wheelDriveType == WheelDriveType.aiwDrive;
@@ -230,27 +231,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void updateFromBytes(List<int> data) {
     try {
-      final newSettings = CarSettings.fromBytes(Uint8List.fromList(data));
-      setState(() {
-        settings = newSettings;
-        _rcNameController.text = settings.rcName;
-      });
+      ref.read(carSettingsProvider.notifier).updateFromBytes(Uint8List.fromList(data));
     } catch (_) {
-      // ignore or handle error
+      // log or ignore
     }
   }
 
   @override
   void initState() {
     super.initState();
-
-    _rcNameController = TextEditingController(text: settings.rcName);
+    
+    //final settings = ref.watch(carSettingsProvider);
+    _rcNameController = TextEditingController(text: "");
 
     Future.microtask(() {
       final ble = ref.read(bleProvider);
       ble.setScreen("settings");
-      ble.onSettingsReceived = updateFromBytes;
-      ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_SETTINGS_LOAD));
+      ref.read(carSettingsProvider.notifier).syncWithEsp32(ble);
     });
   }
 
@@ -262,6 +259,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final settings = ref.watch(carSettingsProvider);
+    _rcNameController.text = settings.rcName;
+
     final connection = ref.watch(bleConnectionNotifierProvider);
     final circle = connection.when(
       data: (state) => CircleAvatar(
@@ -314,14 +314,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     TextButton(
                       child: const Text("Confirm"),
                       onPressed: () {
-                        setState(() {
-                          final ble = ref.read(bleProvider);
-                          ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_SETTINGS_RESET));
-                          settings = CarSettings();
-                          ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_SETTINGS_LOAD));
-                        });
+                        final ble = ref.read(bleProvider);
+                        ref.read(carSettingsProvider.notifier).resetToDefaultAndReload(ble);
                         Navigator.of(context).pop();
-                      },
+                      }
                     ),
                   ],
                 ),
@@ -348,7 +344,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               controller: _rcNameController,
               onChanged: (value) {
                 setState(() {
-                  settings.rcName = value;
+                  ref.read(carSettingsProvider.notifier).update(
+                    settings.copyWith(rcName: value),
+                  );
                 });
               },
             ),
@@ -377,7 +375,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     showFrontSlider = false;
                     showRearSlider = false;
                     showFrontRearSlider = false;      
-                    settings.wheelDriveType = value;              
+        
+                    ref.read(carSettingsProvider.notifier).update(
+                      settings.copyWith(wheelDriveType: value),
+                    );                    
                   });
                 }
               },
@@ -408,7 +409,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               Slider(
                 value: settings.frontRearRatioValue.toDouble(),
-                onChanged: (value) => setState(() => settings.frontRearRatioValue = value.toInt()),
+                onChanged: (value) => setState(() => 
+                  ref.read(carSettingsProvider.notifier).update(
+                    settings.copyWith(frontRearRatioValue: value.toInt()),
+                  )
+                ),
                 min: 0,
                 max: 100,
                 divisions: 100,
@@ -419,7 +424,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               const Text('Front Differential'),
               Slider(
                 value: settings.frontDiffValue.toDouble(),
-                onChanged: (value) => setState(() => settings.frontDiffValue = value.toInt()),
+                onChanged: (value) => setState(() => 
+                  ref.read(carSettingsProvider.notifier).update(
+                    settings.copyWith(frontDiffValue: value.toInt()),
+                  )
+                ),
                 min: 0,
                 max: 100,
                 divisions: 100,
@@ -430,7 +439,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               const Text('Rear Differential'),
               Slider(
                 value: settings.rearDiffValue.toDouble(),
-                onChanged: (value) => setState(() => settings.rearDiffValue = value.toInt()),
+                onChanged: (value) => setState(() => 
+                  ref.read(carSettingsProvider.notifier).update(
+                    settings.copyWith(rearDiffValue: value.toInt()),
+                  )
+                ),
                 min: 0,
                 max: 100,
                 divisions: 100,
@@ -446,7 +459,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 labelBuilder: (type) => type.label,
                 onChanged: (value) {
                   if (value != null) {
-                    setState(() => settings.centralDriveTrainType = value);
+                    setState(() => 
+                      ref.read(carSettingsProvider.notifier).update(
+                        settings.copyWith(centralDriveTrainType: value),
+                      )
+                    );
                   }
                 },
               ),
@@ -459,7 +476,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 labelBuilder: (type) => type.label,
                 onChanged: (value) {
                   if (value != null) {
-                    setState(() => settings.frontDriveTrainType = value);
+                    setState(() => 
+                      ref.read(carSettingsProvider.notifier).update(
+                        settings.copyWith(frontDriveTrainType: value),
+                      )
+                    );
                   }
                 },
               ),
@@ -472,7 +493,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               labelBuilder: (type) => type.label,
               onChanged: (value) {
                 if (value != null) {
-                  setState(() => settings.rearDriveTrainType = value);
+                    setState(() => 
+                      ref.read(carSettingsProvider.notifier).update(
+                        settings.copyWith(rearDriveTrainType: value),
+                      )
+                    );
                 }
               },
             ),
@@ -486,7 +511,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             buildLabeledSlider(
               label: 'Throttle Deadzone:',
               value: settings.throttleDeadzone.toDouble(),
-              onChanged: (value) => setState(() => settings.throttleDeadzone = value.toInt()),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(throttleDeadzone: value.toInt()),
+                )
+              ),
               min: 0,
               max: 20,
               divisions: 20,
@@ -495,7 +524,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             buildLabeledSlider(
               label: 'Steering Deadzone:',
               value: settings.steeringDeadzone.toDouble(),
-              onChanged: (value) => setState(() => settings.steeringDeadzone = value.toInt()),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(steeringDeadzone: value.toInt()),
+                )
+              ),
               min: 0,
               max: 20,
               divisions: 20,
@@ -504,7 +537,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             buildLabeledSlider(
               label: 'Throttle Trim:',
               value: settings.throttleTrim.toDouble(),
-              onChanged: (value) => setState(() => settings.throttleTrim = value.toInt()),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(throttleTrim: value.toInt()),
+                )
+              ),
               min: -50,
               max: 50,
               divisions: 100,
@@ -513,7 +550,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             buildLabeledSlider(
               label: 'Steering Trim:',
               value: settings.steeringTrim.toDouble(),
-              onChanged: (value) => setState(() => settings.steeringTrim = value.toInt()),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(steeringTrim: value.toInt()),
+                )
+              ),
               min: -50,
               max: 50,
               divisions: 100,
@@ -527,19 +568,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             buildLabeledSwitch(
               label: 'Enable ramping',
               value: settings.rampingEnabled,
-              onChanged: (v) => setState(() => settings.rampingEnabled = v),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(rampingEnabled: value),
+                )
+              ),
             ),
 
             buildLabeledSwitch(
               label: 'Enable coasting',
               value: settings.coastingEnabled,
-              onChanged: (v) => setState(() => settings.coastingEnabled = v),
+              onChanged: (value) => setState(() => 
+                ref.read(carSettingsProvider.notifier).update(
+                  settings.copyWith(coastingEnabled: value),
+                )              
+              ),
             ),
             buildLabeledSlider(
               label: 'Coasting Factor (/s):',
               value: settings.coastingFactor.toDouble(),
               onChanged: settings.coastingEnabled
-                  ? (value) => setState(() => settings.coastingFactor = value.toInt())
+                  ? (value) => setState(() => 
+                    ref.read(carSettingsProvider.notifier).update(
+                      settings.copyWith(coastingFactor: value.toInt()),
+                    )                  
+                  )
                   : null, // <- désactive le slider
               min: 0,
               max: 100,

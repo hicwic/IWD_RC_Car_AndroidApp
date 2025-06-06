@@ -64,7 +64,9 @@ class BleManager {
         }
         break;
 
-      case RCProtocol.DATA_TYPE_TELEMETRY:
+      case RCProtocol.DATA_TYPE_TELEMETRY_INPUTS:
+      case RCProtocol.DATA_TYPE_TELEMETRY_OUTPUTS:
+      case RCProtocol.DATA_TYPE_TELEMETRY_MOTION:
         print("Trame telemetry reçu");
         if (onTelemetryReceived != null) {
           onTelemetryReceived?.call(data);
@@ -101,7 +103,7 @@ class BleManager {
     if (commandChar == null) return;
     try {
       await commandChar!.write(data);
-      print("Trame settings envoyée (${data.length} octets)");
+      print("Trame envoyée (${data.length} octets)");
     } catch (e) {
       print("Erreur sendData: $e");
     }

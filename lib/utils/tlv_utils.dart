@@ -33,6 +33,13 @@ class TLVWriter {
     _buffer.addAll(bytes);
   }
 
+  void addUint16(int id, int value) {
+    final bytes = ByteData(2)..setUint16(0, value, Endian.little);
+    _buffer.add(id);
+    _buffer.add(2);
+    _buffer.addAll(bytes.buffer.asUint8List());
+  }
+
   void addInt32(int id, int value) {
     final bytes = ByteData(4)..setInt32(0, value, Endian.little);
     _buffer.add(id);
@@ -90,6 +97,9 @@ class TLVReader {
 
   static String readString(Uint8List bytes) => utf8.decode(bytes);
 
+  static int readUint16(Uint8List bytes) =>
+      ByteData.sublistView(bytes).getUint16(0, Endian.little);
+
   static int readInt32(Uint8List bytes) =>
       ByteData.sublistView(bytes).getInt32(0, Endian.little);
 
@@ -98,4 +108,7 @@ class TLVReader {
 
   static double readDouble(Uint8List bytes) =>
       ByteData.sublistView(bytes).getFloat64(0, Endian.little);
+
+  static double readFloat(Uint8List bytes) =>
+      ByteData.sublistView(bytes).getFloat32(0, Endian.little);      
 }

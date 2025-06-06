@@ -7,7 +7,11 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../ble/ble_provider.dart';
 import '../data/rc_protocol.dart';
-import '../data/telemetry.dart';
+import '../data/car_settings.dart';
+import '../data/telemetryMotionData.dart';
+import '../data/telemetryInputsData.dart';
+import '../data/telemetryOutputsData.dart';
+import '../widgets/telemetry_graph.dart';
 
 class TelemetryScreen extends ConsumerStatefulWidget {
   const TelemetryScreen({super.key});
@@ -18,21 +22,39 @@ class TelemetryScreen extends ConsumerStatefulWidget {
 
 class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
   TelemetryData telemetryData = TelemetryData.empty;
-  final List<FlSpot> targetData = [];
-  final List<FlSpot> currentData = [];
-  final List<FlSpot> rearLeftData = [];
-  final List<FlSpot> rearRightData = [];
-  final List<FlSpot> frontLeftData = [];
-  final List<FlSpot> frontRightData = [];
+
+  final Stopwatch stopwatch = Stopwatch();
+
+  final List<TelemetrySeries> speedSeries = [
+    TelemetrySeries('Target', Colors.orange, invalidValue: -128),
+    TelemetrySeries('Current', Colors.blue, invalidValue: -128),
+    TelemetrySeries('Rear Left', Colors.red, invalidValue: -128),
+    TelemetrySeries('Rear Right', Colors.green, invalidValue: -128),
+    TelemetrySeries('Front Left', Colors.yellow, invalidValue: -128),
+    TelemetrySeries('Front Right', Colors.deepPurple, invalidValue: -128),
+  ];
+
+  final List<TelemetrySeries> _inputSeries = [
+    TelemetrySeries('CH1', Colors.red),
+    TelemetrySeries('CH2', Colors.green),
+    TelemetrySeries('CH3', Colors.blue),
+    TelemetrySeries('CH4', Colors.orange),
+  ];
+
+  final List<TelemetrySeries> _outputSeries = [
+    TelemetrySeries('RearL', Colors.red),
+    TelemetrySeries('RearR', Colors.green),
+    TelemetrySeries('FrontL', Colors.blue),
+    TelemetrySeries('FrontR', Colors.orange),
+    TelemetrySeries('Central', Colors.purple),
+  ];
 
   StreamSubscription<List<int>>? _bleSubscription;
   StreamSubscription<bool>? _connectionSub;
 
   bool telemetryPaused = true;
 
-  double time = 0;
   Timer? timer;
-  final Random rng = Random();
 
   double graphDuration = 10;
   final List<double> durationOptions = [10, 30, 60, 300];
@@ -43,17 +65,20 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
   void initState() {
     super.initState();
 
+    stopwatch.start();
+
     Future.microtask(() {
       final ble = ref.read(bleProvider);
       final connection = ref.watch(bleConnectionNotifierProvider);
-      final isConnected = connection.value == BluetoothConnectionState.connected;      
+      final isConnected = connection.value == BluetoothConnectionState.connected;
       if (isConnected) {
         ble.setScreen("telemetry");
         ble.onTelemetryReceived = _onDataReceived;
       }
     });
-  }
 
+    _updateOutputSeriesLabels();
+  }
 
   @override
   void dispose() {
@@ -62,23 +87,92 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
     super.dispose();
   }
 
-  void _onDataReceived(List<int> raw) {
-    telemetryData = TelemetryData.fromBytes(raw);
+  void _updateOutputSeriesLabels() {
+    final settings = ref.read(carSettingsProvider);
+    _outputSeries.clear();
 
-    setState(() {
-      time += 0.2;
-      _addPoint(targetData, FlSpot(time, telemetryData.targetSpeed));
-      _addPoint(currentData, FlSpot(time, telemetryData.currentSpeed));
-      _addPoint(rearLeftData, FlSpot(time, telemetryData.rearLeft));
-      _addPoint(rearRightData, FlSpot(time, telemetryData.rearRight));
-      _addPoint(frontLeftData, FlSpot(time, telemetryData.rearLeft));
-      _addPoint(frontRightData, FlSpot(time, telemetryData.rearRight));      
-    });
+    switch (settings.wheelDriveType) {
+      case WheelDriveType.xcwDrive:
+        _outputSeries.add(TelemetrySeries('Central (${_driveModeLabel(settings.centralDriveTrainType)})', Colors.purple));
+        break;
+
+      case WheelDriveType.fiwDrive:
+        _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
+        _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
+        break;
+
+      case WheelDriveType.riwDrive:
+        _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
+        _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
+        break;
+
+      case WheelDriveType.aiwDrive:
+        _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
+        _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
+        _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
+        _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
+        break;
+    }
   }
 
-  void _addPoint(List<FlSpot> list, FlSpot point) {
-    list.add(point);
-    list.removeWhere((p) => time - p.x > graphDuration);
+  String _driveModeLabel(DriveTrainType type) {
+    switch (type) {
+      case DriveTrainType.pwm: return 'PWM';
+      case DriveTrainType.dshot: return 'DShot';
+      case DriveTrainType.bdshot: return 'BiDShot';
+    }
+  }
+
+
+  void _onDataReceived(List<int> raw) {
+    try {
+      if (raw.length >= 2) {
+        final msgType = raw[0];
+        final dataType = raw[1];
+
+        final currentTime = stopwatch.elapsedMilliseconds / 1000.0;
+
+        if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_MOTION) {
+          telemetryData = TelemetryData.fromBytes(raw);
+
+          setState(() {
+            speedSeries[0].add(FlSpot(currentTime, telemetryData.targetSpeed), graphDuration);
+            speedSeries[1].add(FlSpot(currentTime, telemetryData.currentSpeed), graphDuration);
+            if (telemetryData.rearLeft != null) {
+              speedSeries[2].add(FlSpot(currentTime, telemetryData.rearLeft!), graphDuration);
+            }
+            if (telemetryData.rearRight != null) {
+              speedSeries[3].add(FlSpot(currentTime, telemetryData.rearRight!), graphDuration);
+            }
+            if (telemetryData.frontLeft != null) {
+              speedSeries[4].add(FlSpot(currentTime, telemetryData.frontLeft!), graphDuration);
+            }
+            if (telemetryData.frontRight != null) {
+              speedSeries[5].add(FlSpot(currentTime, telemetryData.frontRight!), graphDuration);
+            }
+          });
+        } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_INPUTS) {
+          final inputs = TelemetryInputsData.fromBytes(raw);
+          setState(() {
+            for (int i = 0; i < inputs.channels.length; i++) {
+              _inputSeries[i].add(FlSpot(currentTime, inputs.channels[i].toDouble()), graphDuration);
+            }
+          });
+        } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_OUTPUTS) {
+          final outputs = TelemetryOutputsData.fromBytes(raw);
+          setState(() {
+            for (int i = 0; i < outputs.motors.length; i++) {
+              final value = outputs.motors[i];
+              if (value != null) {
+                _outputSeries[i].add(FlSpot(currentTime, value.toDouble()), graphDuration);
+              }
+            }
+          });
+        }
+      }
+    } catch (_) {
+      // ignore malformed data
+    }
   }
 
   @override
@@ -101,13 +195,14 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: circle
+            child: circle,
           ),
         ],
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -119,7 +214,6 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
                     if (value != null) {
                       setState(() {
                         graphDuration = value;
-                        _filterOldPoints();
                       });
                     }
                   },
@@ -136,7 +230,9 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
                   tooltip: telemetryPaused ? 'Reprendre la télémétrie' : 'Pause',
                   onPressed: () {
                     final ble = ref.read(bleProvider);
-                    telemetryPaused ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_RESUME)) : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_PAUSE)) ;
+                    telemetryPaused
+                        ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_RESUME))
+                        : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_PAUSE));
 
                     setState(() {
                       telemetryPaused = !telemetryPaused;
@@ -146,65 +242,30 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            const Text('Speed Telemetry', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 8),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _legend('Target', Colors.orange),
-                _legend('Current', Colors.blue),
-                _legend('Left', Colors.red),
-                _legend('Right', Colors.green),
-              ],
+            TelemetryGraph(
+              title: 'Speed Telemetry',
+              minY: -110,
+              maxY: 110,
+              graphDuration: graphDuration,
+              seriesList: speedSeries,
             ),
             const SizedBox(height: 8),
-            Expanded(
-              child: LineChart(
-                LineChartData(
-                  minY: -110,
-                  maxY: 110,
-                  lineBarsData: [
-                    _line(targetData, Colors.orange),
-                    _line(currentData, Colors.blue),
-                    _line(rearLeftData, Colors.red),
-                    _line(rearRightData, Colors.green),
-                    _line(frontLeftData, Colors.yellow),
-                    _line(frontRightData, Colors.deepPurple),                    
-                  ],
-                  lineTouchData: LineTouchData(
-                    enabled: true,
-                    touchTooltipData: LineTouchTooltipData(
-                      getTooltipItems: (touchedSpots) {
-                        return touchedSpots.map((spot) {
-                          return LineTooltipItem(
-                            '${spot.bar.color == Colors.orange ? 'Target' : spot.bar.color == Colors.blue ? 'Current' : spot.bar.color == Colors.red ? 'Left' : 'Right'}: ${spot.y.toInt()}',
-                            const TextStyle(color: Colors.white),
-                          );
-                        }).toList();
-                      },
-                    ),
-                  ),
-                  gridData: FlGridData(show: true),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(showTitles: true, reservedSize: 40),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    rightTitles: AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    topTitles: AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                  ),
-                  borderData: FlBorderData(show: true),
-                ),
-              ),
+            TelemetryGraph(
+              title: 'Inputs (PWM µs)',
+              minY: 1000,
+              maxY: 2000,
+              graphDuration: graphDuration,
+              seriesList: _inputSeries,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            TelemetryGraph(
+              title: 'Motor Outputs',
+              minY: 0,
+              maxY: 2100,
+              graphDuration: graphDuration,
+              seriesList: _outputSeries,
+            ),
+            const SizedBox(height: 8),
             const Text('System Status', style: TextStyle(fontSize: 18)),
             const SizedBox(height: 8),
             Wrap(
@@ -219,44 +280,6 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  void _filterOldPoints() {
-    targetData.removeWhere((p) => time - p.x > graphDuration);
-    currentData.removeWhere((p) => time - p.x > graphDuration);
-    rearLeftData.removeWhere((p) => time - p.x > graphDuration);
-    rearRightData.removeWhere((p) => time - p.x > graphDuration);
-    frontLeftData.removeWhere((p) => time - p.x > graphDuration);
-    frontRightData.removeWhere((p) => time - p.x > graphDuration);    
-  }
-
-  LineChartBarData _line(List<FlSpot> data, Color color) {
-    final safeData = data.isEmpty ? [const FlSpot(0, 0)] : data;
-
-    return LineChartBarData(
-      spots: safeData,
-      isCurved: true,
-      color: color,
-      dotData: FlDotData(show: false),
-      barWidth: 2,
-    );
-  }
-
-  Widget _legend(String label, Color color) {
-    return Row(
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 4),
-        Text(label),
-      ],
     );
   }
 

@@ -6,13 +6,19 @@ class RCProtocol {
   static const int MSG_TYPE_DATA    = 0xFA;
 
   // == DATA TYPE ==
-  static const int DATA_TYPE_SETTINGS     = 0x01;
-  static const int DATA_TYPE_CONTROL      = 0x02;
-  static const int DATA_TYPE_TELEMETRY    = 0x03;
+  static const int DATA_TYPE_SETTINGS               = 0x01;
+  static const int DATA_TYPE_CONTROL                = 0x02;
+  static const int DATA_TYPE_TELEMETRY_MOTION       = 0x03;
+  static const int DATA_TYPE_TELEMETRY_INPUTS       = 0x04;
+  static const int DATA_TYPE_TELEMETRY_OUTPUTS      = 0x05;
 
   // == CMD TYPE ==
-  static const int CMD_TELEMETRY_PAUSE    = 0x02;
-  static const int CMD_TELEMETRY_RESUME   = 0x03;
+  static const int CMD_TELEMETRY_PAUSE          = 0x02;
+  static const int CMD_TELEMETRY_RESUME         = 0x03;
+  static const int CMD_TELEMETRY_SEND_MOTION    = 0x08;    
+  static const int CMD_TELEMETRY_SEND_INPUTS    = 0x09;
+  static const int CMD_TELEMETRY_SEND_OUTPUTS   = 0x0F;
+  static const int CMD_TELEMETRY_SEND_ALL       = 0x10;
 
   static const int CMD_SETTINGS_LOAD      = 0x04;
   static const int CMD_SETTINGS_RESET     = 0x05;

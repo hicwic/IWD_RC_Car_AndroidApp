@@ -4,9 +4,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_joystick/flutter_joystick.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 import '../ble/ble_provider.dart';
 import '../data/rc_protocol.dart';
+import '../widgets/telemetry_graph.dart';
+import '../data/telemetryMotionData.dart';
+import '../data/telemetryInputsData.dart';
+import '../data/telemetryOutputsData.dart';
+import '../utils/tlv_utils.dart';
+
+enum GraphType {
+  speed,
+  inputs,
+  outputs,
+}
 
 class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
@@ -17,57 +29,137 @@ class ControlScreen extends ConsumerStatefulWidget {
 
 class _ControlScreenState extends ConsumerState<ControlScreen> {
   bool overrideControl = false;
-  int pwmSteering = 1500;
-  int pwmThrottle = 1500;
-  Timer? _pwmTimer;
 
-  double joystickX = 0;
-  double joystickY = 0;
+  GraphType selectedGraph = GraphType.speed;
+
+  double time = 0;
+  final Stopwatch stopwatch = Stopwatch()..start();
+
+  final List<TelemetrySeries> speedSeries = [
+    TelemetrySeries('Target', Colors.orange, invalidValue: 999),
+    TelemetrySeries('Current', Colors.blue, invalidValue: 999),
+    TelemetrySeries('Rear Left', Colors.red, invalidValue: 999),
+    TelemetrySeries('Rear Right', Colors.green, invalidValue: 999),
+    TelemetrySeries('Front Left', Colors.yellow, invalidValue: 999),
+    TelemetrySeries('Front Right', Colors.deepPurple, invalidValue: 999),
+  ];
+
+  final List<TelemetrySeries> inputSeries = [
+    TelemetrySeries('CH1', Colors.red),
+    TelemetrySeries('CH2', Colors.green),
+    TelemetrySeries('CH3', Colors.blue),
+    TelemetrySeries('CH4', Colors.orange),
+  ];
+
+  final List<TelemetrySeries> outputSeries = [
+    TelemetrySeries('RearL', Colors.red),
+    TelemetrySeries('RearR', Colors.green),
+    TelemetrySeries('FrontL', Colors.blue),
+    TelemetrySeries('FrontR', Colors.orange),
+    TelemetrySeries('Central', Colors.purple),
+  ];
 
   @override
   void initState() {
     super.initState();
+
+    final ble = ref.read(bleProvider);
+    ble.onTelemetryReceived = _onDataReceived;
 
     Future.microtask(() {
       final ble = ref.read(bleProvider);
       ble.setScreen("control");
     });
 
-    // Simule les valeurs PWM radio
-    _pwmTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      setState(() {
-        pwmSteering = 1500 + Random().nextInt(200) - 100;
-        pwmThrottle = 1500 + Random().nextInt(200) - 100;
-      });
-    });
   }
 
   @override
   void dispose() {
-    _pwmTimer?.cancel();
     super.dispose();
   }
 
-  List<int> _encodeInputs() {
-    return [
-      0x02,
-      joystickX.toInt(),
-      joystickY.toInt(),
-    ];
+  void _onDataReceived(List<int> raw) {
+    try {
+      if (raw.length >= 2) {
+        final msgType = raw[0];
+        final dataType = raw[1];
+
+        final currentTime = stopwatch.elapsedMilliseconds / 1000.0;
+        double graphDuration = 10;
+
+        if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_MOTION) {
+          final telemetryData = TelemetryData.fromBytes(raw);
+
+          setState(() {
+            speedSeries[0].add(FlSpot(currentTime, telemetryData.targetSpeed), graphDuration);
+            speedSeries[1].add(FlSpot(currentTime, telemetryData.currentSpeed), graphDuration);
+            if (telemetryData.rearLeft != null) {
+              speedSeries[2].add(FlSpot(currentTime, telemetryData.rearLeft!), graphDuration);
+            }
+            if (telemetryData.rearRight != null) {
+              speedSeries[3].add(FlSpot(currentTime, telemetryData.rearRight!), graphDuration);
+            }
+            if (telemetryData.frontLeft != null) {
+              speedSeries[4].add(FlSpot(currentTime, telemetryData.frontLeft!), graphDuration);
+            }
+            if (telemetryData.frontRight != null) {
+              speedSeries[5].add(FlSpot(currentTime, telemetryData.frontRight!), graphDuration);
+            }        
+          });
+        } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_INPUTS) {
+          final inputs = TelemetryInputsData.fromBytes(raw);
+          setState(() {
+            for (int i = 0; i < inputs.channels.length; i++) {
+              inputSeries[i].add(FlSpot(currentTime, inputs.channels[i].toDouble()), graphDuration);
+            }
+          });
+        } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_OUTPUTS) {
+          final outputs = TelemetryOutputsData.fromBytes(raw);
+          setState(() {
+            for (int i = 0; i < outputs.motors.length; i++) {
+              final value = outputs.motors[i];
+              if (value != null) {
+                outputSeries[i].add(FlSpot(currentTime, value.toDouble()), graphDuration);
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {
+      // ignore malformed data
+    }
   }
 
+  void _sendGraphTypeToEsp(GraphType type) {
+    final ble = ref.read(bleProvider);
+    int cmd;
+
+    switch (type) {
+      case GraphType.speed:
+        cmd = RCProtocol.CMD_TELEMETRY_SEND_MOTION;
+        break;
+      case GraphType.inputs:
+        cmd = RCProtocol.CMD_TELEMETRY_SEND_INPUTS;
+        break;
+      case GraphType.outputs:
+        cmd = RCProtocol.CMD_TELEMETRY_SEND_OUTPUTS;
+        break;
+    }
+
+    ble.sendData(RCProtocol.buildCommandMessage(cmd));
+  }
 
   void _onJoystickMove(StickDragDetails details) {
     if (!overrideControl) return;
 
-    setState(() {
-      joystickX = details.x * 100;
-      joystickY = details.y * 100;
-    });
+    int mapToPWM(double val) => (1500 + val * 500).clamp(1000, 2000).toInt();
+
+    final writer = TLVWriter()
+      ..addUint16(0x01, mapToPWM(details.x)) // CH1
+      ..addUint16(0x02, mapToPWM(-details.y)); // CH2
 
     final ble = ref.read(bleProvider);
-    final data = _encodeInputs();
-    ble.sendData(data);
+    ble.sendData(RCProtocol.buildDataMessage(RCProtocol.DATA_TYPE_CONTROL, writer.toBytes()));
   }
 
   @override
@@ -84,6 +176,22 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       error: (_, __) => const CircleAvatar(radius: 6, backgroundColor: Colors.grey),
     );
 
+    final graph = TelemetryGraph(
+      title: selectedGraph == GraphType.speed
+          ? 'Speed Telemetry'
+          : selectedGraph == GraphType.inputs
+              ? 'Inputs (PWM µs)'
+              : 'Motor Outputs',
+      minY: selectedGraph == GraphType.speed ? -110 : selectedGraph == GraphType.inputs ? 1000 : 0,
+      maxY: selectedGraph == GraphType.speed ? 110 : selectedGraph == GraphType.inputs ? 2000 : 2100,
+      graphDuration: 10,
+      seriesList: selectedGraph == GraphType.speed
+          ? speedSeries
+          : selectedGraph == GraphType.inputs
+              ? inputSeries
+              : outputSeries,
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Control'),
@@ -96,33 +204,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       ),
       body: Column(
         children: [
-          // Encart PWM
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: SizedBox(
-              width: double.infinity,
-              child: Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Radio Input (PWM)',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Text('Steering: $pwmSteering µs'),
-                      Text('Throttle: $pwmThrottle µs'),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // Case à cocher
+          // Override toggle
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Card(
@@ -143,10 +225,10 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   onChanged: (val) {
                     if (val != null) {
                       setState(() => overrideControl = val);
- 
                       final ble = ref.read(bleProvider);
-                      overrideControl ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_OVERRIDE)) : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_RELEASE));
-
+                      overrideControl
+                          ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_OVERRIDE))
+                          : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_CONTROL_RELEASE));
                     }
                   },
                 ),
@@ -154,27 +236,44 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             ),
           ),
 
+          // Graph selector + display
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
+            padding: const EdgeInsets.all(12),
+            child: Row(
               children: [
-                Text(
-                  'Throttle: ${(joystickY).toInt()}',
-                  style: const TextStyle(fontSize: 16),
+                const Text('Graph type:'),
+                const SizedBox(width: 12),
+                DropdownButton<GraphType>(
+                  value: selectedGraph,
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => selectedGraph = value);
+                      _sendGraphTypeToEsp(value);
+                    }
+                  },
+                  items: GraphType.values.map((type) {
+                    final label = switch (type) {
+                      GraphType.speed => 'Speed',
+                      GraphType.inputs => 'Inputs',
+                      GraphType.outputs => 'Outputs',
+                    };
+                    return DropdownMenuItem(value: type, child: Text(label));
+                  }).toList(),
                 ),
-                Text(
-                  'Steering: ${(joystickX).toInt()}',
-                  style: const TextStyle(fontSize: 16),
-                ),
-              ],
+                              ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: graph,
+          ),
+
+
 
           const Spacer(),
 
-          // Joystick
           Padding(
-            padding: const EdgeInsets.only(bottom: 24),
+            padding: const EdgeInsets.only(bottom: 50),
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -199,7 +298,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   ),
                 ),
 
-                // Overlay si non activé
                 if (!overrideControl)
                   Container(
                     width: 180,
@@ -215,7 +313,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               ],
             ),
           ),
-
         ],
       ),
     );

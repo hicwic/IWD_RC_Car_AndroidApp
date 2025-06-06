@@ -1,6 +1,10 @@
 import 'dart:typed_data';
 import 'rc_protocol.dart';
 import '../utils/tlv_utils.dart';
+import '../ble/ble_manager.dart'; 
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 
 enum WheelDriveType {
   xcwDrive,
@@ -58,6 +62,68 @@ class CarSettings {
     this.throttleInverted = false,
     this.coastingFactor = 50,
   });
+
+  factory CarSettings.initial() {
+    return CarSettings(
+      rcName: "MyRC",
+      wheelDriveType: WheelDriveType.xcwDrive,
+      rampingEnabled: true,
+      coastingEnabled: true,
+      centralDriveTrainType: DriveTrainType.pwm,
+      frontDiffValue: 50,
+      frontDriveTrainType: DriveTrainType.pwm,
+      rearDiffValue: 50,
+      rearDriveTrainType: DriveTrainType.pwm,
+      frontRearRatioValue: 50,
+      throttleDeadzone: 10,
+      steeringDeadzone: 0,
+      steeringTrim: 0,
+      throttleTrim: 0,
+      steeringInverted: false,
+      throttleInverted: false,
+      coastingFactor: 50,
+    );
+  }
+
+  CarSettings copyWith({
+    String? rcName,
+    WheelDriveType? wheelDriveType,
+    bool? rampingEnabled,
+    bool? coastingEnabled,
+    DriveTrainType? centralDriveTrainType,
+    int? frontDiffValue,
+    DriveTrainType? frontDriveTrainType,
+    int? rearDiffValue,
+    DriveTrainType? rearDriveTrainType,
+    int? frontRearRatioValue,
+    int? coastingFactor,
+    int? throttleDeadzone,
+    int? steeringDeadzone,
+    int? steeringTrim,
+    int? throttleTrim,
+    bool? steeringInverted,
+    bool? throttleInverted,
+  }) {
+    return CarSettings(
+      rcName: rcName ?? this.rcName,
+      wheelDriveType: wheelDriveType ?? this.wheelDriveType,
+      rampingEnabled: rampingEnabled ?? this.rampingEnabled,
+      coastingEnabled: coastingEnabled ?? this.coastingEnabled,
+      centralDriveTrainType: centralDriveTrainType ?? this.centralDriveTrainType,
+      frontDiffValue: frontDiffValue ?? this.frontDiffValue,
+      frontDriveTrainType: frontDriveTrainType ?? this.frontDriveTrainType,
+      rearDiffValue: rearDiffValue ?? this.rearDiffValue,
+      rearDriveTrainType: rearDriveTrainType ?? this.rearDriveTrainType,
+      frontRearRatioValue: frontRearRatioValue ?? this.frontRearRatioValue,
+      coastingFactor: coastingFactor ?? this.coastingFactor,
+      throttleDeadzone: throttleDeadzone ?? this.throttleDeadzone,
+      steeringDeadzone: steeringDeadzone ?? this.steeringDeadzone,
+      steeringTrim: steeringTrim ?? this.steeringTrim,
+      throttleTrim: throttleTrim ?? this.throttleTrim,
+      steeringInverted: steeringInverted ?? this.steeringInverted,
+      throttleInverted: throttleInverted ?? this.throttleInverted,
+    );
+  }
 
   Uint8List toBytes() {
     final writer = TLVWriter();
@@ -139,4 +205,38 @@ class CarSettings {
     );
   }
 
+}
+
+final carSettingsProvider = StateNotifierProvider<CarSettingsNotifier, CarSettings>((ref) {
+  return CarSettingsNotifier();
+});
+
+class CarSettingsNotifier extends StateNotifier<CarSettings> {
+  CarSettingsNotifier() : super(CarSettings.initial());
+
+  void update(CarSettings newSettings) {
+    state = newSettings;
+  }
+
+  void updateFromBytes(Uint8List data) {
+    try {
+      final settings = CarSettings.fromBytes(data);
+      state = settings;
+    } catch (e) {
+      // Tu peux logguer ou gérer une erreur si le format est invalide
+      debugPrint("Erreur lors du décodage des settings: $e");
+    }
+  }
+
+  void syncWithEsp32(BleManager ble) {
+    ble.onSettingsReceived = (data) {
+      updateFromBytes(Uint8List.fromList(data));
+    };
+    ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_SETTINGS_LOAD));
+  }
+
+  void resetToDefaultAndReload(BleManager ble) {
+    ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_SETTINGS_RESET));
+    syncWithEsp32(ble);
+  }  
 }
