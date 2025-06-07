@@ -57,6 +57,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     TelemetrySeries('FrontL', Colors.blue),
     TelemetrySeries('FrontR', Colors.orange),
     TelemetrySeries('Central', Colors.purple),
+    TelemetrySeries('Servo (PWM)', Colors.pink),    
   ];
 
   @override
@@ -116,8 +117,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
         } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_OUTPUTS) {
           final outputs = TelemetryOutputsData.fromBytes(raw);
           setState(() {
-            for (int i = 0; i < outputs.motors.length; i++) {
-              final value = outputs.motors[i];
+            for (int i = 0; i < outputs.outputs.length; i++) {
+              final value = outputs.outputs[i];
               if (value != null) {
                 outputSeries[i].add(FlSpot(currentTime, value.toDouble()), graphDuration);
               }

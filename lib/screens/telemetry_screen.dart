@@ -47,6 +47,7 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
     TelemetrySeries('FrontL', Colors.blue),
     TelemetrySeries('FrontR', Colors.orange),
     TelemetrySeries('Central', Colors.purple),
+    TelemetrySeries('Servo (PWM)', Colors.pink),
   ];
 
   StreamSubscription<List<int>>? _bleSubscription;
@@ -91,28 +92,39 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
     final settings = ref.read(carSettingsProvider);
     _outputSeries.clear();
 
-    switch (settings.wheelDriveType) {
-      case WheelDriveType.xcwDrive:
-        _outputSeries.add(TelemetrySeries('Central (${_driveModeLabel(settings.centralDriveTrainType)})', Colors.purple));
-        break;
+    _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
+    _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
+    _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
+    _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
+    _outputSeries.add(TelemetrySeries('Central (${_driveModeLabel(settings.centralDriveTrainType)})', Colors.purple));    
+    _outputSeries.add(TelemetrySeries('Servo (PWM)', Colors.pink));     
 
-      case WheelDriveType.fiwDrive:
-        _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
-        _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
-        break;
+    // switch (settings.wheelDriveType) {
+    //   case WheelDriveType.xcwDrive:
+    //     _outputSeries.add(TelemetrySeries('Central (${_driveModeLabel(settings.centralDriveTrainType)})', Colors.purple));
+    //     _outputSeries.add(TelemetrySeries('Servo (PWM)', Colors.pink));
+    //     break;
 
-      case WheelDriveType.riwDrive:
-        _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
-        _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
-        break;
+    //   case WheelDriveType.fiwDrive:
+    //     _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
+    //     _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
+    //     _outputSeries.add(TelemetrySeries('Servo (PWM)', Colors.pink));        
+    //     break;
 
-      case WheelDriveType.aiwDrive:
-        _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
-        _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
-        _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
-        _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
-        break;
-    }
+    //   case WheelDriveType.riwDrive:
+    //     _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
+    //     _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
+    //     _outputSeries.add(TelemetrySeries('Servo (PWM)', Colors.pink));        
+    //     break;
+
+    //   case WheelDriveType.aiwDrive:
+    //     _outputSeries.add(TelemetrySeries('Front L (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.blue));
+    //     _outputSeries.add(TelemetrySeries('Front R (${_driveModeLabel(settings.frontDriveTrainType)})', Colors.orange));
+    //     _outputSeries.add(TelemetrySeries('Rear L (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.red));
+    //     _outputSeries.add(TelemetrySeries('Rear R (${_driveModeLabel(settings.rearDriveTrainType)})', Colors.green));
+    //     _outputSeries.add(TelemetrySeries('Servo (PWM)', Colors.pink));        
+    //     break;
+    // }
   }
 
   String _driveModeLabel(DriveTrainType type) {
@@ -159,10 +171,10 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
             }
           });
         } else if (msgType == RCProtocol.MSG_TYPE_DATA && dataType == RCProtocol.DATA_TYPE_TELEMETRY_OUTPUTS) {
-          final outputs = TelemetryOutputsData.fromBytes(raw);
+          final data = TelemetryOutputsData.fromBytes(raw);
           setState(() {
-            for (int i = 0; i < outputs.motors.length; i++) {
-              final value = outputs.motors[i];
+            for (int i = 0; i < data.outputs.length; i++) {
+              final value = data.outputs[i];
               if (value != null) {
                 _outputSeries[i].add(FlSpot(currentTime, value.toDouble()), graphDuration);
               }
@@ -193,10 +205,28 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
       appBar: AppBar(
         title: const Text('Telemetry'),
         actions: [
+          IconButton(
+            icon: Icon(
+              telemetryPaused ? Icons.play_arrow : Icons.pause,
+              color: Colors.blueAccent,
+            ),
+            tooltip: telemetryPaused ? 'Reprendre la télémétrie' : 'Pause',
+            onPressed: () {
+              final ble = ref.read(bleProvider);
+              telemetryPaused
+                  ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_RESUME))
+                  : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_PAUSE));
+
+              setState(() {
+                telemetryPaused = !telemetryPaused;
+              });
+            },
+          ),               
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: circle,
           ),
+     
         ],
       ),
       body: SingleChildScrollView(
@@ -222,23 +252,15 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
                     return DropdownMenuItem(value: sec, child: Text(label));
                   }).toList(),
                 ),
-                IconButton(
-                  icon: Icon(
-                    telemetryPaused ? Icons.play_arrow : Icons.pause,
-                    color: Colors.blueAccent,
-                  ),
-                  tooltip: telemetryPaused ? 'Reprendre la télémétrie' : 'Pause',
-                  onPressed: () {
-                    final ble = ref.read(bleProvider);
-                    telemetryPaused
-                        ? ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_RESUME))
-                        : ble.sendData(RCProtocol.buildCommandMessage(RCProtocol.CMD_TELEMETRY_PAUSE));
-
-                    setState(() {
-                      telemetryPaused = !telemetryPaused;
-                    });
-                  },
-                ),
+              ],
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Expanded(child: _statusChip('CanReverse', telemetryData.readyForReverse)),
+                Expanded(child: _statusChip('Reverse', telemetryData.reverse)),
+                Expanded(child: _statusChip('Ramping', telemetryData.ramping)),
+                Expanded(child: _statusChip('Coasting', telemetryData.coasting)),
               ],
             ),
             const SizedBox(height: 8),
@@ -265,28 +287,35 @@ class _TelemetryScreenState extends ConsumerState<TelemetryScreen> {
               graphDuration: graphDuration,
               seriesList: _outputSeries,
             ),
-            const SizedBox(height: 8),
-            const Text('System Status', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                _statusChip('Reverse', telemetryData.reverse),
-                _statusChip('ReadyForReverse', telemetryData.readyForReverse),
-                _statusChip('Ramping', telemetryData.ramping),
-                _statusChip('Coasting', telemetryData.coasting),
-              ],
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _statusChip(String label, bool value) {
-    return Chip(
-      label: Text(label),
-      backgroundColor: value ? Colors.green.shade300 : Colors.grey.shade400,
-    );
-  }
+Widget _statusChip(String label, bool value) {
+  return Padding(
+    padding: const EdgeInsets.all(4),
+    child: Chip(
+      label: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          style: TextStyle(
+            color: value ? Colors.white : Colors.black54,
+            fontWeight: FontWeight.w500,
+          ),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        ),
+      ),
+      backgroundColor: value ? Colors.green.shade600 : Colors.grey.shade300,
+      shape: const StadiumBorder(),
+      elevation: 2,
+      shadowColor: Colors.black38,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    ),
+  );
+}
+
 }
